@@ -1,0 +1,213 @@
+/*
+	This section covers the Pig scripts for the excite search engine logs analysis
+*/
+
+/*
+	Preprocessing the data
+*/
+--Registering the tutorial.jar file containing the UDFs
+REGISTER ./tutorial.jar
+
+--Loading the data from the file. 
+raw = load 'excite-small.log' using PigStorage('\t') as (user, time, query:chararray);
+
+--Removing empty text and URLs using the UDF in tutorial.jar
+cleanup = filter raw by org.apache.pig.tutorial.NonURLDetector(query);                                                
+
+/*
+	1. The total number of query records:
+*/
+--Group all the queries in a single row
+queries_group = group cleanup all;  
+
+--Counting the total number of query records in the second column where they are all grouped.
+total_queries = foreach queries_group generate COUNT($1);
+
+--Storing the result in the output file
+STORE total_queries INTO '2a.txt' USING PigStorage(); 
+
+/*
+	2. The maximum query length in words
+*/
+--Tokenizing each of the query records for counting
+tokenise_query = foreach cleanup generate query, TOKENIZE(query) as q_tokens;         
+
+--Counting the number of words in each query record at every row and storing that count in count_of_words
+count_words = foreach tokenise_query generate query, COUNT($1.$0) AS count_of_words;
+
+--Grouping the 'count_of_words' at every row into a single row to calculate the maximum
+group_all_words = group count_words all;
+
+--Calculating the maximum out of the 'count_of_words' values
+max_length_in_words = foreach group_all_words GENERATE MAX($1.$1);
+
+--Storing the maximum value into the output file
+STORE max_length_in_words into '2b.txt' using PigStorage();   
+
+/*
+	3. The average query length in words
+*/
+--Calculating the average of the 'count_of_words' values
+avg_length_in_words = foreach group_all_words GENERATE AVG($1.$1);
+
+--Storing the maximum value into the output file
+STORE avg_length_in_words into '2c.txt' using PigStorage();   
+
+
+/*
+	4. Total no of unique users
+*/
+--Generating the list of all the users
+user_list = foreach cleanup generate user;     
+
+--Generating the list of all distinct users
+distinct_users = distinct user_list;
+
+--Grouping all the users together for counting
+allusers = group distinct_users all;
+
+--Counting the total number of users
+total_users = foreach allusers generate COUNT_STAR($1);
+
+--Storing the result in an output file
+STORE total_users into '2d.txt' using PigStorage();   
+
+/*
+	5. The average number of query records per user
+*/
+--Grouping all the records in the file by the user
+user_group = group cleanup by user;
+
+--Computing the number of query records for each user
+records_per_user = foreach user_group generate COUNT($1);
+
+--Grouping the number of query records per user 
+all_counts = group records_per_user all;
+
+--Computing the average number of query records for each user
+avg_queries = foreach all_counts generate AVG($1);
+
+--Storing the output in an output file
+STORE avg_queries into '2e.txt' using PigStorage(); 
+
+/*
+	6. What percent of query records contain queries with Boolean operators (AND, OR, NOT or +)
+*/
+
+--Group all the queries in a single row
+queries_group = group cleanup all;  
+
+--Counting the total number of query records in the second column where they are all grouped.
+total_queries = foreach queries_group generate COUNT($1);
+
+--Filter query records containing AND, OR, NOT or +
+matched_queries = filter cleanup by $2 matches '.*[AND|OR|NOT|\\+].*';
+
+--Grouping all the filtered query records
+group_matched = group matched_queries all;                                                                                
+
+--Storing the count of filtered records and the total records for calculating the percentage
+percent_bool = foreach group_matched generate group, COUNT($1), total_queries.$0;
+
+--Calculating the percentage of filtered query records using the total_queries computed in question 2.a.
+percent_bool1 = foreach percent_bool generate ((float)$1/(float)$2)*100 as percentage;
+
+--Storing the output in an output file
+STORE percent_bool1 into '2f.txt' using PigStorage(); 
+
+/*
+	7. The 10 longest distinct queries
+*/
+--Getting all the queries
+all_queries = foreach cleanup generate query;
+--Getting all the distinct queries
+distinct_ones = distinct all_queries;
+                                  
+--Getting all the queries and their lengths                    
+ lengths = foreach distinct_ones generate query,StringSize(query) as qlen;
+
+--Ordering the records in the descending order of query lengths
+ ordered_q_len = order lengths by qlen desc; 
+
+--Fetching the top 10 longest queries
+top_ten_long = limit ordered_q_len 10;
+
+--Storing the output in an output file
+STORE top_ten_long into '2g.txt' using PigStorage(); 
+
+
+/*
+	8. The 10 most frequently occurring queries
+*/
+--Grouping all the records by the queries
+query_groups = group cleanup by query;
+
+--Counting the number of occurrences of each query and storing it in a new field called frequency
+count_freq = foreach query_groups generate group, COUNT($1) as frequency;
+
+--Ordering the frequencies in a descending order
+order_count_freq = order count_freq by frequency desc;
+
+--Fetching the top 10 frequently occurring queries
+top_freq_queries = limit order_count_freq 10;
+
+--Storing the output in an output file
+STORE top_freq_queries into '2h.txt' using PigStorage(); 
+
+/*
+	This section contains scripts of part 4 of the assignment
+*/
+
+
+/*
+	Preprocessing the data
+*/
+
+REGISTER ./tutorial.jar
+
+--Loading the input file
+raw = load 'excite-small.log' using PigStorage('\t') as (user,time,query);  
+
+--Removing empty text and URLs using the UDF in tutorial.jar
+cleanup = filter raw by org.apache.pig.tutorial.NonURLDetector(query);  
+
+--Converting all the query records to the lower case
+cleanup_lower = FOREACH cleanup GENERATE user, time, org.apache.pig.tutorial.ToLower(query) as query;   
+
+--Loading the first three columns from the file
+places = load 'dataen.txt' using PigStorage('\t') as (p_id,place,alt_names);           
+
+
+/*
+	9. Find queries with reference to US zip codes 
+*/
+-- Filtering all those queries that contain references to zip codes
+zip_codes = filter cleanup_lower by query matches '.*zipcode.*|.*zip code.*|.*[0-9]{5}.*';
+
+--Storing the result in the output file
+STORE zip_codes INTO '4a.txt' USING PigStorage(); 
+
+
+/*
+	10. Find queries with references to place names
+*/
+-- Fetching all the places from the places input file in the lower case
+only_places = foreach places generate org.apache.pig.tutorial.ToLower($1) as place;     
+
+-- Fetching all the distinct places 
+distinct_places = DISTINCT only_places;                                                 
+
+--N-Gram' ing all queries in the 'excite-small.log' file to get the references of places in the queries
+ngrammed = FOREACH cleanup_lower GENERATE user, time, flatten(org.apache.pig.tutorial.NGramGenerator(query)) as ngram;   
+
+--tokenize_words = foreach ngrammed generate query, tokenize($3) as tokens, count(tokenize($3)) as count;
+--words_list = FILTER tokenize_words BY $2==1;
+
+--places_in_query = JOIN only_places by $0, words_list by $1;
+
+places_in_query = JOIN distinct_places by $0, ngrammed by $2;
+
+--Storing the result in the output file. Although places may repeat, the queries are distinct since the user and the time are different.
+STORE places_in_query INTO '4b.txt' USING PigStorage();               
+
+
